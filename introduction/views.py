@@ -17,6 +17,8 @@ from random import randint
 from xml.dom.pulldom import START_ELEMENT, parseString
 from xml.sax import make_parser
 from xml.sax.handler import feature_external_ges
+import ast
+from django.utils.html import escape
 
 import jwt
 import requests
@@ -196,24 +198,61 @@ def insec_des(request):
     else:
         return redirect('login')
 
-@dataclass
-class TestUser:
-    admin: int = 0
-pickled_user = pickle.dumps(TestUser())
-encoded_user = base64.b64encode(pickled_user)
+# @dataclass
+# class TestUser:
+#     admin: int = 0
+# pickled_user = pickle.dumps(TestUser())
+# encoded_user = base64.b64encode(pickled_user)
 
+# def insec_des_lab(request):
+#     if request.user.is_authenticated:
+#         response = render(request,'Lab/insec_des/insec_des_lab.html', {"message":"Only Admins can see this page"})
+#         token = request.COOKIES.get('token')
+#         if token == None:
+#             token = encoded_user
+#             response.set_cookie(key='token',value=token.decode('utf-8'))
+#         else:
+#             token = base64.b64decode(token)
+#             admin = pickle.loads(token)
+#             if admin.admin == 1:
+#                 response = render(request,'Lab/insec_des/insec_des_lab.html', {"message":"Welcome Admin, SECRETKEY:ADMIN123"})
+#                 return response
+
+#         return response
+#     else:
+#         return redirect('login')
 def insec_des_lab(request):
     if request.user.is_authenticated:
-        response = render(request,'Lab/insec_des/insec_des_lab.html', {"message":"Only Admins can see this page"})
+        response = render(
+            request,
+            'Lab/insec_des/insec_des_lab.html',
+            {"message": "Only Admins can see this page"}
+        )
+
         token = request.COOKIES.get('token')
-        if token == None:
-            token = encoded_user
-            response.set_cookie(key='token',value=token.decode('utf-8'))
+
+        if token is None:
+            # Cookie solo informativa, NO de seguridad
+            safe_token = base64.b64encode(
+                json.dumps({"admin": 0}).encode()
+            )
+            response.set_cookie(
+                key='token',
+                value=safe_token.decode('utf-8')
+            )
         else:
-            token = base64.b64decode(token)
-            admin = pickle.loads(token)
-            if admin.admin == 1:
-                response = render(request,'Lab/insec_des/insec_des_lab.html', {"message":"Welcome Admin, SECRETKEY:ADMIN123"})
+            try:
+                data = json.loads(base64.b64decode(token).decode())
+            except Exception:
+                data = {"admin": 0}
+
+            # Decisión de privilegios REAL
+            if request.user.is_staff or request.user.is_superuser:
+                response = render(
+                    request,
+                    'Lab/insec_des/insec_des_lab.html',
+                    {"message": "Welcome Admin, SECRETKEY:ADMIN123"}
+                )
                 return response
 
         return response
@@ -411,43 +450,93 @@ def cmd(request):
         return render(request,'Lab/CMD/cmd.html')
     else:
         return redirect('login')
+
 @csrf_exempt
 def cmd_lab(request):
     if request.user.is_authenticated:
         if(request.method=="POST"):
-            domain=request.POST.get('domain')
+            domain = request.POST.get('domain')
+
             # Remove all common protocols (case-insensitive) and www prefix
-            domain = re.sub(r'^(?:(https?|ftp)://)?(?:www\.)?', '', domain, flags=re.IGNORECASE)
-            os=request.POST.get('os')
-            print(os)
-            if(os=='win'):
-                command="nslookup {}".format(domain)
+            domain = re.sub(
+                r'^(?:(https?|ftp)://)?(?:www\.)?',
+                '',
+                domain,
+                flags=re.IGNORECASE
+            )
+
+            # Validación estricta del dominio
+            if not re.match(r'^[a-zA-Z0-9.-]+$', domain):
+                output = "Invalid domain name"
+                return render(request,'Lab/CMD/cmd_lab.html',{"output":output})
+
+            os_type = request.POST.get('os')
+            print(os_type)
+
+            # Antes: comando como string + shell=True
+            # Ahora: comando como lista, sin shell
+            if(os_type == 'win'):
+                command = ["nslookup", domain]
             else:
-                command = "dig {}".format(domain)
-            
+                command = ["dig", domain]
+
             try:
-                # output=subprocess.check_output(command,shell=True,encoding="UTF-8")
                 process = subprocess.Popen(
                     command,
-                    shell=True,
-                    stdout=subprocess.PIPE, 
-                    stderr=subprocess.PIPE)
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
                 stdout, stderr = process.communicate()
                 data = stdout.decode('utf-8')
                 stderr = stderr.decode('utf-8')
-                # res = json.loads(data)
-                # print("Stdout\n" + data)
                 output = data + stderr
-                print(data + stderr)
+                print(output)
             except:
                 output = "Something went wrong"
                 return render(request,'Lab/CMD/cmd_lab.html',{"output":output})
-            print(output)
+
             return render(request,'Lab/CMD/cmd_lab.html',{"output":output})
         else:
             return render(request, 'Lab/CMD/cmd_lab.html')
     else:
         return redirect('login')
+# @csrf_exempt
+# def cmd_lab(request):
+#     if request.user.is_authenticated:
+#         if(request.method=="POST"):
+#             domain=request.POST.get('domain')
+#             # Remove all common protocols (case-insensitive) and www prefix
+#             domain = re.sub(r'^(?:(https?|ftp)://)?(?:www\.)?', '', domain, flags=re.IGNORECASE)
+#             os=request.POST.get('os')
+#             print(os)
+#             if(os=='win'):
+#                 command="nslookup {}".format(domain)
+#             else:
+#                 command = "dig {}".format(domain)
+            
+#             try:
+#                 # output=subprocess.check_output(command,shell=True,encoding="UTF-8")
+#                 process = subprocess.Popen(
+#                     command,
+#                     shell=True,
+#                     stdout=subprocess.PIPE, 
+#                     stderr=subprocess.PIPE)
+#                 stdout, stderr = process.communicate()
+#                 data = stdout.decode('utf-8')
+#                 stderr = stderr.decode('utf-8')
+#                 # res = json.loads(data)
+#                 # print("Stdout\n" + data)
+#                 output = data + stderr
+#                 print(data + stderr)
+#             except:
+#                 output = "Something went wrong"
+#                 return render(request,'Lab/CMD/cmd_lab.html',{"output":output})
+#             print(output)
+#             return render(request,'Lab/CMD/cmd_lab.html',{"output":output})
+#         else:
+#             return render(request, 'Lab/CMD/cmd_lab.html')
+#     else:
+#         return redirect('login')
 
 @csrf_exempt
 def cmd_lab2(request):
@@ -974,27 +1063,46 @@ def ssti(request):
 
 def ssti_lab(request):
     if request.user.is_authenticated:
-        if request.method=="GET":
+        if request.method == "GET":
             users_blogs = Blogs.objects.filter(author=request.user)
-            return render(request,"Lab_2021/A3_Injection/ssti_lab.html", {"blogs":users_blogs})
-        elif request.method=="POST":
+            return render(
+                request,
+                "Lab_2021/A3_Injection/ssti_lab.html",
+                {"blogs": users_blogs}
+            )
+
+        elif request.method == "POST":
             blog = request.POST["blog"]
+
+            # Bloquear sintaxis de templates
+            if re.search(r"({{|}}|{%|%})", blog):
+                blog = "Invalid input detected"
+
+            # Escapar HTML
+            blog = escape(blog)
+
             id = str(uuid.uuid4()).split('-')[-1]
 
-            blog = filter_blog(blog)
-            prepend_code = "{% extends 'introduction/base.html' %}\
-                {% block content %}{% block title %}\
-                <title>SSTI-Blogs</title>\
-                {% endblock %}"
-            
+            prepend_code = (
+                "{% extends 'introduction/base.html' %}"
+                "{% block content %}{% block title %}"
+                "{% endblock %}"
+            )
+
             blog = prepend_code + blog + "{% endblock %}"
-            new_blog = Blogs.objects.create(author = request.user, blog_id = id)
-            new_blog.save() 
+
+            new_blog = Blogs.objects.create(author=request.user, blog_id=id)
+            new_blog.save()
+
             dirname = os.path.dirname(__file__)
-            filename = os.path.join(dirname, f"templates/Lab_2021/A3_Injection/Blogs/{id}.html")
-            file = open(filename, "w+") 
-            file.write(blog)
-            file.close()
+            filename = os.path.join(
+                dirname,
+                f"templates/Lab_2021/A3_Injection/Blogs/{id}.html"
+            )
+
+            with open(filename, "w+") as file:
+                file.write(blog)
+
             return redirect(f'blog/{id}')
     else:
         return redirect('login')
