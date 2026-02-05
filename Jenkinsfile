@@ -45,6 +45,10 @@ pipeline {
                     """
                     
                     // El "Security Gate" que ahora no detendrá el pipeline
+                    // si ejecuto el comando y hay fallos entonces el build falla y no ejecuta
+                    // los siguientes stages. Con catchError lo capturamos y marcamos
+                    // el stage como UNSTABLE pero el build sigue y entonces se suben los resultados a DefectDojo
+                    // y a Dependency-Track.
                     catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                         echo "Ejecutando Security Gate para Bandit..."
                         sh """
@@ -89,43 +93,35 @@ pipeline {
         stage('Integración DefectDojo') {
             steps {
                 script {
-                    def engagementID = "1"
-                    
-                    // IMPORTANTE: Listamos los archivos para confirmar que existen antes del curl
-                    sh "ls -lh bandit-report.json gitleaks-report.json || echo 'Archivos no encontrados'"
+                    def engagementID = "1" 
 
-                    echo "Subiendo hallazgos de Bandit a DefectDojo (Engagement: ${engagementID})..."
+                    echo "Limpiando hallazgos antiguos para purificar métricas..."
+                    // Esto borra los hallazgos previos del engagement para que no se sumen
                     sh """
-                        curl -X POST "http://django-defectdojo-nginx-1:8080/api/v2/import-scan/" \
-                        -H "Authorization: Token ${DOJO_TOKEN}" \
-                        -F "active=true" \
-                        -F "verified=false" \
-                        -F "scan_type=Bandit Scan" \
-                        -F "engagement=${engagementID}" \
-                        -F "file=@bandit-report.json"
-                    """
-                    
-                    echo "Subiendo hallazgos de Dependency Track a DefectDojo..."
-                    sh """
-                        curl -X POST "http://django-defectdojo-nginx-1:8080/api/v2/import-scan/" \
-                        -H "Authorization: Token ${DOJO_TOKEN}" \
-                        -F "active=true" \
-                        -F "verified=false" \
-                        -F "scan_type=CycloneDX Scan" \
-                        -F "engagement=${engagementID}" \
-                        -F "file=@bom.json"
+                        curl -X DELETE "http://django-defectdojo-nginx-1:8080/api/v2/engagements/${engagementID}/all_findings/" \
+                        -H "Authorization: Token ${DOJO_TOKEN}" || echo "Nada que borrar"
                     """
 
-                    echo "Subiendo hallazgos de Gitleaks a DefectDojo..."
-                    sh """
-                        curl -X POST "http://django-defectdojo-nginx-1:8080/api/v2/import-scan/" \
-                        -H "Authorization: Token ${DOJO_TOKEN}" \
-                        -F "active=true" \
-                        -F "verified=false" \
-                        -F "scan_type=Gitleaks Scan" \
-                        -F "engagement=${engagementID}" \
-                        -F "file=@gitleaks-report.json"
-                    """
+                    def scans = [
+                        [type: 'Bandit Scan', file: 'bandit-report.json'],
+                        [type: 'Gitleaks Scan', file: 'gitleaks-report.json'],
+                        [type: 'CycloneDX Scan', file: 'bom.json']
+                    ]
+
+                    scans.each { scan ->
+                        echo "Subiendo ${scan.type}..."
+                        sh """
+                            curl -X POST "http://django-defectdojo-nginx-1:8080/api/v2/import-scan/" \
+                            -H "Authorization: Token ${DOJO_TOKEN}" \
+                            -F "active=true" \
+                            -F "verified=false" \
+                            -F "scan_type=${scan.type}" \
+                            -F "engagement=${engagementID}" \
+                            -F "file=@${scan.file}" \
+                            -F "close_old_findings=true" \
+                            -F "push_to_git=true"
+                        """
+                    }
                 }
             }
         }
